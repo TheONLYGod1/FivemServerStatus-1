@@ -5,37 +5,6 @@ const Discord = require('discord.js');
 const fetchTimeout = require('fetch-timeout');
 const { paddedFullWidth, errorWrap } = require('./utils.js');
 
-if (Discord.version.startsWith('12.')) {
-  // rename functions for compatibilities sake while testing
-  Discord.RichEmbed = Discord.MessageEmbed;
-  Discord.TextChannel.prototype.fetchMessage = function(snowflake) { // not perfect but whatevs
-    return this.messages.fetch.apply(this.messages,[snowflake]);
-    // return new Promise((resolve,reject) => {
-    //   let message = this.messages.fetch(snowflake);
-    //   if (message === undefined) reject(notfound);
-    //   else resolve(message);
-    // })
-  }
-  Object.defineProperty(Discord.User.prototype,'displayAvatarURL',{
-    'get': function() {
-      return this.avatarURL();
-    }
-  })
-  // Object.defineProperty(Discord.GuildMember.prototype,'voiceChannelID',{
-  //   'get': function() {
-  //     if (this.voiceStates.size > 0) {
-  //       var channelID;
-  //       for (let id in this.voiceStates) {
-  //         channelID =  this.voiceStates[id].channel.id;
-  //         console.log(this.voiceStates[id].channel);
-  //       }
-  //       return channelID;
-  //     }
-  //     return undefined;
-  //   }
-  // })
-}
-
 const LOG_LEVELS = {
   'ERROR': 3,
   'INFO': 2,
@@ -43,6 +12,7 @@ const LOG_LEVELS = {
   'SPAM': 0
 }
 
+// --- don't mess with this unless you know what you are doing... ---
 const BOT_CONFIG = {
   'apiRequestMethod': 'sequential',
   'messageCacheMaxSize': 50,
@@ -51,7 +21,7 @@ const BOT_CONFIG = {
   'fetchAllMembers': false,
   'disableEveryone': true,
   'sync': false,
-  'restWsBridgeTimeout': 5000, // check these
+  'restWsBridgeTimeout': 5000,
   'restTimeOffset': 300,
   'disabledEvents': [
     'CHANNEL_PINS_UPDATE',
@@ -59,17 +29,19 @@ const BOT_CONFIG = {
   ],
   'ws': {
     'large_threshold': 100,
-    'compress': true
+    'compress': false
   }
 }
-
-const USER_AGENT = `Roofstad bot ${require('./package.json').version} , Node ${process.version} (${process.platform}${process.arch})`;
+// ---------------------------------------------------------------------
+const USER_AGENT = `FSS bot ${require('./package.json').version} , Node ${process.version} (${process.platform}${process.arch})`;
 
 exports.start = function(SETUP) {
   const URL_SERVER = SETUP.URL_SERVER;
-
-  const URL_PLAYERS = new URL('/players.json',SETUP.URL_SERVER).toString();
-  const URL_INFO = new URL('/info.json',SETUP.URL_SERVER).toString();
+  const SERVER_NAME = SETUP.SERVER_NAME;
+  const SERVER_LOGO = SETUP.SERVER_LOGO;
+  const PERMISSION = SETUP.PERMISSION;
+  const URL_PLAYERS = new URL('/players.json', SETUP.URL_SERVER).toString();
+  const URL_INFO = new URL('/info.json', SETUP.URL_SERVER).toString();
   const MAX_PLAYERS = 64;
   const TICK_MAX = 1 << 9; // max bits for TICK_N
   const FETCH_TIMEOUT = 900;
@@ -78,7 +50,6 @@ exports.start = function(SETUP) {
     'method': 'GET',
     'headers': { 'User-Agent': USER_AGENT }
   };
-
   const LOG_LEVEL = SETUP.LOG_LEVEL !== undefined ? parseInt(SETUP.LOG_LEVEL) : LOG_LEVELS.INFO;
   const BOT_TOKEN = SETUP.BOT_TOKEN;
   const CHANNEL_ID = SETUP.CHANNEL_ID;
@@ -87,16 +58,12 @@ exports.start = function(SETUP) {
   const BUG_CHANNEL = SETUP.BUG_CHANNEL;
   const BUG_LOG_CHANNEL = SETUP.BUG_LOG_CHANNEL;
   const LOG_CHANNEL = SETUP.LOG_CHANNEL;
-  const STREAM_URL = SETUP.STREAM_URL;
-  const STREAM_CHANNEL = SETUP.STREAM_CHANNEL;
   const UPDATE_TIME = 2500; // in ms
 
   var TICK_N = 0;
   var MESSAGE;
   var LAST_COUNT;
   var STATUS;
-
-  var STREAM_DISPATCHER = undefined;
 
   var loop_callbacks = []; // for testing whether loop is still running
 
@@ -106,7 +73,7 @@ exports.start = function(SETUP) {
 
   const getPlayers = function() {
     return new Promise((resolve,reject) => {
-      fetchTimeout(URL_PLAYERS,FETCH_OPS,FETCH_TIMEOUT).then((res) => {
+      fetchTimeout(URL_PLAYERS, FETCH_TIMEOUT).then((res) => {
         res.json().then((players) => {
           resolve(players);
         }).catch(reject);
@@ -116,7 +83,7 @@ exports.start = function(SETUP) {
 
   const getVars = function() {
     return new Promise((resolve,reject) => {
-      fetchTimeout(URL_INFO,FETCH_OPS,FETCH_TIMEOUT).then((res) => {
+      fetchTimeout(URL_INFO, FETCH_OPS, FETCH_TIMEOUT).then((res) => {
         res.json().then((info) => {
           resolve(info.vars);
         }).catch(reject);
@@ -129,56 +96,66 @@ exports.start = function(SETUP) {
   const sendOrUpdate = function(embed) {
     if (MESSAGE !== undefined) {
       MESSAGE.edit(embed).then(() => {
-        log(LOG_LEVELS.DEBUG,'Update success');
+        log(LOG_LEVELS.DEBUG, 'Update success');
       }).catch(() => {
-        log(LOG_LEVELS.ERROR,'Update failed');
+        log(LOG_LEVELS.ERROR,' Update failed');
       })
     } else {
-      let channel = bot.channels.get(CHANNEL_ID);
+      let channel = bot.channels.cache.get(CHANNEL_ID);
       if (channel !== undefined) {
-        channel.fetchMessage(MESSAGE_ID).then((message) => {
+        channel.messages.fetch(MESSAGE_ID).then((message) => {
           MESSAGE = message;
           message.edit(embed).then(() => {
-            log(LOG_LEVELS.SPAM,'Update success');
+            log(LOG_LEVELS.SPAM, '✅ Update successful');
           }).catch(() => {
-            log(LOG_LEVELS.ERROR,'Update failed');
+            log(LOG_LEVELS.ERROR, '❌ Update failed');
           });
         }).catch(() => {
           channel.send(embed).then((message) => {
             MESSAGE = message;
-            log(LOG_LEVELS.INFO,`Sent message (${message.id})`);
+            log(LOG_LEVELS.INFO,`✅ Status message sent. Message ID: ${message.id}`);
           }).catch(console.error);
         })
       } else {
-        log(LOG_LEVELS.ERROR,'Update channel not set');
+        log(LOG_LEVELS.ERROR, '❌ Update channel not set');
       }
     }
   };
+bot.on('ready', () => {
+var checkMe = ['ADMINISTRATOR','CREATE_INSTANT_INVITE','KICK_MEMBERS','BAN_MEMBERS','MANAGE_GUILD','ADD_REACTIONS','VIEW_AUDIT_LOG','PRIORITY_SPEAKER' ,'VIEW_CHANNEL','SEND_MESSAGES','SEND_TTS_MESSAGES','MANAGE_MESSAGES','READ_MESSAGE_HISTORY','MENTION_EVERYONE','USE_EXTERNAL_EMOJIS' ,'VIEW_GUILD_INSIGHTS','CONNECT','SPEAK','MUTE_MEMBERS','DEAFEN_MEMBERS','MOVE_MEMBERS','USE_VAD','CHANGE_NICKNAME','MANAGE_NICKNAMES','MANAGE_ROLES','MANAGE_WEBHOOKS','MANAGE_EMOJIS','STREAM','EMBED_LINKS','ATTACH_FILES','MANAGE_CHANNELS']  
+  if(!checkMe.includes(PERMISSION)) {
 
+  console.log(`⚠ NOTICE: Your 'PERMISSION' variable (${PERMISSION}) is incorrect please, check the readme to find the list of permissions... exiting....`);
+  process.exit(0);             
+  }
+
+})
   const UpdateEmbed = function() {
-    let dot = TICK_N % 2 === 0 ? 'Roofstad' : 'Roleplay';
-    let embed = new Discord.RichEmbed()
-    .setAuthor("VinityRP Server Status", "https://cdn.discordapp.com/attachments/580680574369398794/582249284825776148/logo_vinity_end.png")
-    .setColor(0x2894C2)
-    .setFooter(TICK_N % 2 === 0 ? '⚪ VinityRP' : '⚫ VinityRP')
+    let dot = TICK_N % 2 === 0 ? 'RP' : 'Roleplay';
+    let embed = new Discord.MessageEmbed()
+    .setAuthor(`${SERVER_NAME} | Server Status`, SERVER_LOGO)
+    .setColor("#00f931")
+    .setFooter(TICK_N % 2 === 0 ? `${SERVER_NAME}` : `${SERVER_NAME}`)
     .setTimestamp(new Date())
-    .addField('\n\u200b\nHoe kan je de server joinen?','Je kan de server joinen doormiddel van **vinityrp.nl** in te voeren bij Direct Connect. Onderaan staat de server status om te kijken hoeveel mensen er online zijn en in de wachtrij staan. Dit systeem is gemaakt door [Douile](https://github.com/Douile/)\n\u200b\n',false)
+    .addField('\n\u200b\nServer Name', `\`\`\`${SERVER_NAME}\`\`\``,false)
     if (STATUS !== undefined)
     {
-      embed.addField(':warning: Actuele server status:',`${STATUS}\n\u200b\n`);
-      embed.setColor(0xff5d00)
+      embed.addField('📬 Server Notice:',`\`\`\`${STATUS}\`\`\`\n\u200b\n`);
+      embed.setColor('#00f931')
     }
     return embed;
   };
 
   const offline = function() {
-    log(LOG_LEVELS.SPAM,Array.from(arguments));
+    log(LOG_LEVELS.SPAM, Array.from(arguments));
     if (LAST_COUNT !== null) log(LOG_LEVELS.INFO,`Server offline ${URL_SERVER} (${URL_PLAYERS} ${URL_INFO})`);
     let embed = UpdateEmbed()
     .setColor(0xff0000)
-    .addField('Server Status',':x: Offline',true)
-    .addField('Wachtrij','?',true)
-    .addField('Online spelers','?\n\u200b\n',true);
+    .addFields(
+      { name: "Server Status",  value: "```❌ Offline```",   inline: true },
+      { name: "Waching",        value: "```--```",            inline: true },
+      { name: "Online Players", value: "```--```\n\u200b\n",  inline: true }
+    )
     sendOrUpdate(embed);
     LAST_COUNT = null;
   };
@@ -189,50 +166,26 @@ exports.start = function(SETUP) {
         if (players.length !== LAST_COUNT) log(LOG_LEVELS.INFO,`${players.length} players`);
         let queue = vars['Queue'];
         let embed = UpdateEmbed()
-        .addField('Server Status',':white_check_mark: Online',true)
-        .addField('Wachtrij',queue === 'Enabled' || queue === undefined ? '0' : queue.split(':')[1].trim(),true)
-        .addField('Online spelers',`${players.length}/${MAX_PLAYERS}\n\u200b\n`,true);
-        // .addField('\u200b','\u200b\n\u200b\n',true);
+        .addFields(
+          { name: "Server Status", value: "```✅ Online```",                                                                              inline: true },
+          { name: "Waching", value: `\`\`\`${queue === 'Enabled' || queue === undefined ? '0' : queue.split(':')[1].trim()}\`\`\``,       inline: true },
+          { name: "Online Players", value: `\`\`\`${players.length}/${MAX_PLAYERS}\`\`\`\n\u200b\n`,                                      inline: true }
+          )
         if (players.length > 0) {
-          // method D
+          
           const fieldCount = 3;
           const fields = new Array(fieldCount);
           fields.fill('');
-          // for (var i=0;i<players.length;i++) {
-          //   fields[i%4 >= 2 ? 1 : 0] += `${players[i].name}${i % 2 === 0 ? '\u200e' : '\n\u200f'}`;
-          // }
-          fields[0] = `**Inwoners:**\n`;
-          for (var i=0;i<players.length;i++) {
-            fields[(i+1)%fieldCount] += `${players[i].name.substr(0,12)}\n`; // first 12 characters of players name
+         
+          fields[0] = `**Players On:**\n`;
+          for (var i=0; i < players.length; i++) {
+            fields[(i+1)%fieldCount] += `${players[i].name.substr(0,12)} Ping: ${players[i].ping}ms\n`; // first 12 characters of players name
           }
-          for (var i=0;i<fields.length;i++) {
+          for (var i=0; i < fields.length; i++) {
             let field = fields[i];
-            if (field.length > 0) embed.addField('\u200b',field,true);
+            if (field.length > 0) embed.addField('\u200b', field, true);
           }
 
-          // method A
-          // let maxLen = 8;
-          // var text = '';
-          // for (var i=0;i<players.length;i++) {
-          //   var eol = false;
-          //   if ((i+1) % 3 === 0) eol = true;
-          //   text += paddedFullWidth(players[i].name,eol ? players[i].name.length : maxLen);
-          //   if (eol) text += '\n';
-          // }
-          // embed.addField('Spelers',`**${text}**`,false);
-
-          // method B
-          // embed.addField('Spelers','\u200b',false);
-          // for (var player of players) {
-          //   embed.addField('\u200b',player.name,true);
-          // }
-          // for (var i=0;i<3-(players.length%3);i++) {
-          //   embed.addField('\u200b','\u200b',false);
-          // }
-
-          // method C
-          // let playerNames = Array.from(players.values()).map((c) => `**${c.name}**`).join(', ');
-          // embed.addField('Spelers',playerNames,false);
         }
         sendOrUpdate(embed);
         LAST_COUNT = players.length;
@@ -250,13 +203,14 @@ exports.start = function(SETUP) {
 
   bot.on('ready',() => {
     log(LOG_LEVELS.INFO,'Started...');
-    // bot.user.setGame('Roofstad', 'https://www.twitch.tv/RoqueTV');
-    bot.user.setActivity('VinityRP',{'url':'https://www.twitch.tv/RoqueTV','type':'STREAMING'});
-    bot.generateInvite(['ADMINISTRATOR']).then((link) => {
-      log(LOG_LEVELS.INFO,`Invite URL - ${link}`);
-    }).catch(null);
+    bot.user.setPresence({
+      activity: {
+          name: `${SERVER_NAME}`,
+          type: "WATCHING"
+      }, status: "online"
+    })
+  
     bot.setInterval(updateMessage, UPDATE_TIME);
-    // use VoiceBroadcasts for multiple channels
   });
 
   function checkLoop() {
@@ -267,7 +221,7 @@ exports.start = function(SETUP) {
           resolved = true;
           resolve(true);
         } else {
-          log(LOG_LEVELS.ERROR,'Loop callback called after timeout');
+          log(LOG_LEVELS.ERROR, 'Loop callback called after timeout');
           reject(null);
         }
       })
@@ -295,21 +249,21 @@ exports.start = function(SETUP) {
   bot.on('disconnect',(devent,shard) => {
     log(LOG_LEVELS.INFO,'Disconnected');
     checkLoop().then((running) => {
-      log(LOG_LEVELS.INFO,`Loop still running: ${running}`);
+      log(LOG_LEVELS.INFO, `Loop still running: ${running}`);
     }).catch(console.error);
   })
 
   bot.on('reconnecting',(shard) => {
     log(LOG_LEVELS.INFO,'Reconnecting');
     checkLoop().then((running) => {
-      log(LOG_LEVELS.INFO,`Loop still running: ${running}`);
+      log(LOG_LEVELS.INFO, `Loop still running: ${running}`);
     }).catch(console.error);
   })
 
   bot.on('resume',(replayed,shard) => {
-    log(LOG_LEVELS.INFO,`Resuming (${replayed} events replayed)`);
+    log(LOG_LEVELS.INFO, `Resuming (${replayed} events replayed)`);
     checkLoop().then((running) => {
-      log(LOG_LEVELS.INFO,`Loop still running: ${running}`);
+      log(LOG_LEVELS.INFO, `Loop still running: ${running}`);
     }).catch(console.error);
   })
 
@@ -320,24 +274,46 @@ exports.start = function(SETUP) {
       log(LOG_LEVELS.DEBUG,`Loop still running: ${running}`);
     }).catch(console.error);
   })
-  
   bot.on('message', async function (msg) {
-    if (msg.channel.id === '586631869928308743') {
-        await msg.react(bot.emojis.get('587057796936368128'));
-        await msg.react(bot.emojis.get('595353996626231326'));
+    
+    if (msg.content === '+help') {
+      if (msg.member.hasPermission(PERMISSION)) {
+      let embed =  new Discord.MessageEmbed()
+      .setAuthor(msg.member.nickname ? msg.member.nickname : msg.author.tag, msg.author.displayAvatarURL())
+      .setColor(0x2894C2)
+      .setTitle(`${SERVER_NAME} | Help`)
+      .setDescription('+status <Message> - Adds a warning message to the server status embed\n+status clear - Clears the warning message\n+help - Displays the bots commands')
+      .setTimestamp(new Date());
+      msg.channel.send(embed)
+    } else {
+      let noPerms =  new Discord.MessageEmbed()
+        .setAuthor(msg.member.nickname ? msg.member.nickname : msg.author.tag, msg.author.displayAvatarURL())
+        .setColor(0x2894C2)
+        .setTitle(`${SERVER_NAME} | Error`)
+        .setDescription(`❌ You do not have the ${PERMISSION}, therefor you cannot run this command!`)
+        .setTimestamp(new Date());
+        msg.channel.send(noPerms)
+    }
+  } 
+});
+  bot.on('message', async function (msg) {
+    if (msg.channel.id === '631992057417695272') {
+        await msg.react(bot.emojis.cache.get('587057796936368128'));
+        await msg.react(bot.emojis.cache.get('595353996626231326'));
     }
 });
 
   bot.on('message',(message) => {
     if (!message.author.bot) {
       if (message.member) {
-        if (message.member.hasPermission('ADMINISTRATOR')) {
+        
           if (message.content.startsWith('+status ')) {
+            if (message.member.hasPermission(PERMISSION)) {
             let status = message.content.substr(7).trim();
-            let embed =  new Discord.RichEmbed()
-            .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag,message.author.displayAvatarURL)
+            let embed =  new Discord.MessageEmbed()
+            .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag, message.author.displayAvatarURL())
             .setColor(0x2894C2)
-            .setTitle('Updated status message')
+            .setTitle('☑️ Updated status message')
             .setTimestamp(new Date());
             if (status === 'clear') {
               STATUS = undefined;
@@ -346,42 +322,50 @@ exports.start = function(SETUP) {
               STATUS = status;
               embed.setDescription(`New message:\n\`\`\`${STATUS}\`\`\``);
             }
-            bot.channels.get(LOG_CHANNEL).send(embed);
-            return log(LOG_LEVELS.INFO,`${message.author.username} updated status`);
+            bot.channels.cache.get(LOG_CHANNEL).send(embed);
+            return log(LOG_LEVELS.INFO, `🔘 ${message.author.username} updated status`);
+          } else {
+            let noPerms =  new Discord.MessageEmbed()
+              .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag, message.author.displayAvatarURL())
+              .setColor(0x2894C2)
+              .setTitle(`${SERVER_NAME} | Error`)
+              .setDescription(`❌ You do not have the ${PERMISSION}, therefor you cannot run this command!`)
+              .setTimestamp(new Date());
+              message.channel.send(noPerms)
           }
-        }
+        } 
         if (message.channel.id === SUGGESTION_CHANNEL) {
-          let embed = new Discord.RichEmbed()
-          .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag,message.author.displayAvatarURL)
+          let embed = new Discord.MessageEmbed()
+          .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag, message.author.displayAvatarURL())
           .setColor(0x2894C2)
-          .setTitle('Suggestie')
+          .setTitle('Suggestion')
           .setDescription(message.content)
           .setTimestamp(new Date());
           message.channel.send(embed).then((message) => {
             const sent = message;
             sent.react('👍').then(() => {
               sent.react('👎').then(() => {
-                log(LOG_LEVELS.SPAM,'Completed suggestion message');
+                log(LOG_LEVELS.SPAM, 'Completed suggestion message');
               }).catch(console.error);
             }).catch(console.error);
           }).catch(console.error);
           return message.delete();
         }
         if (message.channel.id === BUG_CHANNEL) {
-          let embedUser = new Discord.RichEmbed()
-          .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag,message.author.displayAvatarURL)
+          let embedUser = new Discord.MessageEmbed()
+          .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag, message.author.displayAvatarURL())
           .setColor(0x2894C2)
           .setTitle('Bug Report')
-          .setDescription('Je bericht is succesvol gestuurd naar het staff-team!')
+          .setDescription('Your report has been successfully sent to the staff team!')
           .setTimestamp(new Date());
-          let embedStaff = new Discord.RichEmbed()
-          .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag,message.author.displayAvatarURL)
+          let embedStaff = new Discord.MessageEmbed()
+          .setAuthor(message.member.nickname ? message.member.nickname : message.author.tag, message.author.displayAvatarURL())
           .setColor(0x2894C2)
           .setTitle('Bug Report')
           .setDescription(message.content)
           .setTimestamp(new Date());
           message.channel.send(embedUser).then(null).catch(console.error);
-          bot.channels.get(BUG_LOG_CHANNEL).send(embedStaff).then(null).catch(console.error);
+          bot.channels.cache.get(BUG_LOG_CHANNEL).send(embedStaff).then(null).catch(console.error);
           return message.delete();
         }
       }
@@ -389,7 +373,7 @@ exports.start = function(SETUP) {
   });
 
   bot.login(BOT_TOKEN).then(null).catch(() => {
-    log(LOG_LEVELS.ERROR,'Unable to login check your login token');
+    log(LOG_LEVELS.ERROR, 'The token you provided is invalided. Please make sure you are using the correct one from https://discord.com/developers/applications!');
     console.error(e);
     process.exit(1);
   });
